@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<link rel="manifest" href="manifest.json">
 	<meta name="theme-color" content="#1a2a6c">
+	<!-- Favicon -->
+	<link rel="icon" type="image/svg+xml" href="favicon.svg">
+	<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
+	<link rel="shortcut icon" href="favicon.ico">
+	<link rel="apple-touch-icon" href="apple-touch-icon.png">
     <title>Análisis BJT con Rb, Rc y Re</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -550,6 +556,75 @@
             opacity: 1;
         }
 
+        /* ---- Chip de versión (dinámico, obtenido del Service Worker) ---- */
+        .version-chip {
+            display: flex;
+            width: fit-content;
+            align-items: center;
+            gap: 8px;
+            margin: 26px auto 0;
+            padding: 7px 18px;
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid rgba(255, 204, 0, 0.45);
+            border-radius: 999px;
+            color: var(--accent);
+            font-size: 0.95rem;
+            font-weight: 600;
+            letter-spacing: 0.4px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+            cursor: default;
+            transition: all 0.3s ease;
+            user-select: none;
+        }
+        
+        .version-chip:hover {
+            transform: translateY(-2px);
+            border-color: rgba(255, 204, 0, 0.8);
+            box-shadow: 0 6px 18px rgba(255, 204, 0, 0.25);
+        }
+        
+        .version-chip i {
+            font-size: 0.85rem;
+        }
+        
+        .version-chip .version-value {
+            font-family: 'Consolas', 'Courier New', monospace;
+        }
+        
+        .version-chip .sw-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: var(--accent);
+            box-shadow: 0 0 8px rgba(255, 204, 0, 0.8);
+            animation: swPulse 1.2s ease-in-out infinite;
+        }
+        
+        .version-chip.ok .sw-dot {
+            background: var(--success);
+            box-shadow: 0 0 8px rgba(77, 255, 77, 0.8);
+            animation: none;
+        }
+        
+        .version-chip.error .sw-dot {
+            background: var(--danger);
+            box-shadow: 0 0 8px rgba(255, 77, 77, 0.8);
+            animation: none;
+        }
+        
+        @keyframes swPulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.45; transform: scale(0.8); }
+        }
+        
+        @media (max-width: 768px) {
+            .version-chip {
+                margin-top: 20px;
+                font-size: 0.85rem;
+                padding: 6px 14px;
+            }
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 10px;
@@ -608,6 +683,11 @@
     <div class="container">
         <header>
             <h1><i class="fas fa-microchip"></i> Análisis BJT con Rb, Rc y Re</h1>
+            <div class="version-chip loading" id="versionChip" role="status" aria-live="polite" title="Versión de la aplicación, obtenida del Service Worker">
+                <span class="sw-dot" aria-hidden="true"></span>
+                <i class="fas fa-code-branch" aria-hidden="true"></i>
+                <span class="version-value" id="versionValue">…</span>
+            </div>
             <p class="subtitle">Herramienta para análisis de transistores BJT con resistencias en base, colector y emisor. 
             Visualiza la recta de carga y determina el estado del transistor.</p>
         </header>
@@ -1253,14 +1333,76 @@
             actualizarCalculos();
         });
     </script>
-	<script>
-		if ('serviceWorker' in navigator) {
-			window.addEventListener('load', () => {
-			navigator.serviceWorker.register('sw.js')
-        .then(reg => console.log('Service Worker registrado:', reg.scope))
-        .catch(err => console.log('Error al registrar Service Worker:', err));
-    });
-  }
-</script>
+    <script>
+        // ---- Chip de versión dinámico (la versión la proporciona el Service Worker) ----
+        const versionChip = document.getElementById('versionChip');
+        const versionValue = document.getElementById('versionValue');
+        let versionTimeout = null;
+
+        function pedirVersion(sw) {
+            if (sw) sw.postMessage({ type: 'GET_VERSION' });
+        }
+
+        function mostrarVersion(version) {
+            clearTimeout(versionTimeout);
+            versionValue.textContent = 'v' + version;
+            versionChip.classList.remove('loading');
+            versionChip.classList.add('ok');
+        }
+
+        function marcarErrorVersion(mensaje) {
+            clearTimeout(versionTimeout);
+            versionValue.textContent = mensaje;
+            versionChip.classList.remove('loading');
+            versionChip.classList.add('error');
+        }
+
+        if ('serviceWorker' in navigator) {
+            // Respuesta del Service Worker con la versión actual
+            navigator.serviceWorker.addEventListener('message', event => {
+                if (event.data && event.data.type === 'SW_VERSION' && event.data.version) {
+                    mostrarVersion(event.data.version);
+                }
+            });
+
+            // Cuando el SW toma el control de la página (p. ej., tras la primera instalación)
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                pedirVersion(navigator.serviceWorker.controller);
+            });
+
+            window.addEventListener('load', () => {
+                // Si la página ya está controlada, pide la versión directamente
+                pedirVersion(navigator.serviceWorker.controller);
+
+                navigator.serviceWorker.register('sw.js')
+                    .then(reg => {
+                        console.log('Service Worker registrado:', reg.scope);
+                        // Si aún no controla la página, prueba con el SW activo, en espera o instalándose
+                        pedirVersion(reg.active || reg.waiting || reg.installing);
+                        const swPendiente = reg.installing || reg.waiting;
+                        if (swPendiente) {
+                            swPendiente.addEventListener('statechange', () => {
+                                if (swPendiente.state === 'activated') {
+                                    pedirVersion(swPendiente);
+                                }
+                            });
+                        }
+                    })
+                    .catch(err => {
+                        console.log('Error al registrar Service Worker:', err);
+                        marcarErrorVersion('SW no disponible');
+                    });
+
+                // Si en 10 s no ha llegado ninguna versión, marca el chip como erróneo
+                versionTimeout = setTimeout(() => {
+                    if (!versionChip.classList.contains('ok')) {
+                        marcarErrorVersion('SW sin respuesta');
+                    }
+                }, 10000);
+            });
+        } else {
+            marcarErrorVersion('SW no soportado');
+        }
+    </script>
 </body>
 </html>
